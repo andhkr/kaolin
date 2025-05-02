@@ -5,6 +5,14 @@ from functools import partial # For wrapper function example
 # --- Quaternion Helper Functions (Using robust versions from previous answer) ---
 # Note: Using wxyz convention for quaternions [w, x, y, z]
 
+__all__ = [
+    'dual_quaternion_lbs_optimized',
+    'robust_matrix_to_quaternion',
+    'quaternion_multiply',
+    'quaternion_conjugate',
+    'quaternion_to_matrix'
+]
+
 def robust_matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
     """
     Convert rotations given as rotation matrices to quaternions more robustly.
@@ -118,7 +126,7 @@ def quaternion_to_matrix(q: torch.Tensor) -> torch.Tensor:
 
 # --- Optimized Dual Quaternion Skinning (Kavan et al. 2007, Sec 3.4) ---
 
-def dual_quaternion_nlbs(x0: torch.Tensor, tfms: torch.Tensor, w_x0: torch.Tensor) -> torch.Tensor:
+def dual_quaternion_lbs_optimized(x0: torch.Tensor, tfms: torch.Tensor, w_x0: torch.Tensor) -> torch.Tensor:
     """
     Applies Dual Quaternion Linear Blend Skinning (DQLBS) using the
     optimized formulation from Kavan et al. 2007, Section 3.4.

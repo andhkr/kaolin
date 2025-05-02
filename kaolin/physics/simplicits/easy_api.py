@@ -30,6 +30,10 @@ import numpy as np
 import logging
 from functools import partial
 
+#different skinning methods
+import kaolin.physics.simplicits.dual_quat_SWDQ as dual_quat
+import kaolin.physics.simplicits.tblend as tblend
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,8 +82,10 @@ class SimplicitsObject:
         # simplicits_utils.method = skining_method
         if self.skinning_method == 'lbs':
             self._skinning_impl = simplicits_utils.standard_lbs
+        elif self.skinning_method == 'tblend_lbs':
+            self._skinning_impl = tblend.standard_lbs_alexa
         elif self.skinning_method == 'dqlbs':
-            self._skinning_impl = simplicits_utils.dual_quaternion_lbs_optimized
+            self._skinning_impl = dual_quat.dual_quaternion_lbs_optimized
         else:
             raise ValueError(f"Unknown skinning method: {self.skinning_method}")
         
