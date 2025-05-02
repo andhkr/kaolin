@@ -41,7 +41,7 @@ def loss_ortho(weights):
     return nn.MSELoss()(weights.T @ weights, torch.eye(weights.shape[1], device=weights.device))
 
 
-def loss_elastic(model, pts, yms, prs, rhos, transforms, appx_vol, interp_step):
+def loss_elastic(model, pts, yms, prs, rhos, transforms, appx_vol, interp_step,skinning_function):
     r"""Calculate a version of simplicits elastic loss for training.
 
     Args:
@@ -60,7 +60,7 @@ def loss_elastic(model, pts, yms, prs, rhos, transforms, appx_vol, interp_step):
 
     mus, lams = material_utils.to_lame(yms, prs)
 
-    partial_weight_fcn_lbs = partial(weight_function_lbs, tfms=transforms, fcn=model)
+    partial_weight_fcn_lbs = partial(skinning_function, tfms=transforms, fcn=model)
     pt_wise_Fs = finite_diff_jac(partial_weight_fcn_lbs, pts)
     pt_wise_Fs = pt_wise_Fs[:, :, 0]
 
@@ -78,8 +78,7 @@ def loss_elastic(model, pts, yms, prs, rhos, transforms, appx_vol, interp_step):
     # weighted average (since we uniformly sample, this is uniform for now)
     return (appx_vol / pts.shape[0]) * (torch.sum(lin_elastic + neo_elastic))
 
-
-def compute_losses(model, normalized_pts, yms, prs, rhos, en_interp, batch_size, num_handles, appx_vol, num_samples, le_coeff, lo_coeff):
+def compute_losses(model, normalized_pts, yms, prs, rhos, en_interp, batch_size, num_handles, appx_vol, num_samples, le_coeff, lo_coeff,skinning_function):
     r""" Perform a step of the simplicits training process
 
     Args:
@@ -118,7 +117,7 @@ def compute_losses(model, normalized_pts, yms, prs, rhos, en_interp, batch_size,
     # loss_elastic(model, pts, yms, prs,  rhos, transforms, appx_vol, interp_step)
     # le = torch.tensor(0,device=sample_pts.device, dtype=sample_pts.dtype) #
     le = le_coeff * loss_elastic(model, sample_pts, sample_yms, sample_prs,
-                                 sample_rhos, batch_transforms, appx_vol, en_interp)
+                                 sample_rhos, batch_transforms, appx_vol, en_interp,skinning_function)
 
     # Calculate orthogonality of skinning weights
     lo = lo_coeff * loss_ortho(weights)

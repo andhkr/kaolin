@@ -75,8 +75,16 @@ class SimplicitsObject:
 
         #skining method
         self.skinning_method = skining_method
-        simplicits_utils.method = skining_method
-
+        # simplicits_utils.method = skining_method
+        if self.skinning_method == 'lbs':
+            self._skinning_impl = simplicits_utils.standard_lbs
+        elif self.skinning_method == 'dqlbs':
+            self._skinning_impl = simplicits_utils.dual_quaternion_lbs_optimized
+        else:
+            raise ValueError(f"Unknown skinning method: {self.skinning_method}")
+        
+        self.apply_skinning_func = partial(simplicits_utils.apply_skinning,
+                                    skinning_impl_func=self._skinning_impl)
         # Normalize the appx vol of object
         norm_bb_max = torch.max((self.pts - self.bb_min) / (self.bb_max - self.bb_min),
                                 dim=0).values  # get the bb_max of the normalized pts
@@ -106,13 +114,15 @@ class SimplicitsObject:
                                           batch_size=training_batch_size,  # TODO: maybe pass into train() below?
                                           num_handles=self.num_handles,
                                           appx_vol=norm_appx_vol,
-                                          num_samples=self.num_samples)
+                                          num_samples=self.num_samples,
+                                          skinning_function = self.apply_skinning_func)
         else:
             self.compute_losses = partial(compute_losses,
                                           batch_size=training_batch_size,  # TODO: maybe pass into train() below?
                                           num_handles=self.num_handles,
                                           appx_vol=norm_appx_vol,
-                                          num_samples=self.num_samples)
+                                          num_samples=self.num_samples,
+                                          skinning_function = self.apply_skinning_func)
 
         self.model = None
         if self.num_handles == 0:
