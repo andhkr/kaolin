@@ -1,0 +1,6 @@
+# Material file for beam.obj
+newmtl BeamMat
+Ka 0.200 0.200 0.200
+Kd 0.800 0.800 0.800
+Ks 0.000 0.000 0.000
+Ns 10.0

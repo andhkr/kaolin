@@ -654,9 +654,11 @@ class SimplicitsScene:
             o = self.sim_obj_dict[idx]
             o.remove_force(name)
     
+
     def setup_cantilever_bar_scene(self, bar_sim_obj: SimplicitsObject):
         """
         Sets up a scene with a bar fixed at one end, subject to gravity.
+        Improved to ensure the cantilever effect is properly simulated.
         """
         print("Setting up cantilever bar scene...")
 
@@ -664,9 +666,7 @@ class SimplicitsScene:
         obj_idx = self.add_object(bar_sim_obj)
 
         # --- Define Boundary Condition ---
-        # IMPORTANT: Adjust this function based on your bar's orientation and dimensions!
-        # Let's assume the bar lies mostly along the X-axis and we fix the 'minimum X' end.
-
+        # Get rest vertices and identify the fixed end
         bar_pts_rest = bar_sim_obj.pts # Get rest vertices (N, 3)
         x_coords = bar_pts_rest[:, 0]
         min_x, max_x = torch.min(x_coords), torch.max(x_coords)
@@ -677,47 +677,61 @@ class SimplicitsScene:
             # Identify points at the 'minimum X' end
             return pts_rest[:, 0] < (min_x + end_threshold)
 
-        # Apply the boundary condition to fix the points identified by the function
-        fix_penalty = 1e6
+        # Apply stronger boundary condition to ensure fixed end is properly constrained
+        fix_penalty = 1e7  # Increased penalty for more rigid fixing
         self.set_object_boundary_condition(obj_idx, "fix_wall_end", identify_bar_fixed_end, fix_penalty)
         print(f"Applied boundary condition to fix end (X < {min_x + end_threshold:.3f})")
 
         # --- Set Material Properties ---
-        # Make it flexible like rubber (lower Young's Modulus 'yms')
-        # Also set density ('rhos') so gravity has a noticeable effect
+        # Make it flexible enough to show clear deformation
+        # Adjust Young's modulus to make the bar more flexible
+        # Increase density to enhance gravity effect
         self.set_object_materials(obj_idx,
-                                yms=torch.tensor(1e4, device=self.default_device, dtype=self.default_dtype), # Lower stiffness
-                                rhos=torch.tensor(1000, device=self.default_device, dtype=self.default_dtype)) # Density (e.g., kg/m^3)
-        print("Set bar material properties (Yms=1e4, Rhos=1000).")
+                                yms=torch.tensor(8e3, device=self.default_device, dtype=self.default_dtype), # Lower stiffness
+                                rhos=torch.tensor(2000, device=self.default_device, dtype=self.default_dtype)) # Higher density
+        print("Set bar material properties (Yms=8e3, Rhos=2000).")
+
+        # --- Apply initial deformation (optional) ---
+        # This can help start the cantilever motion instead of waiting for gravity
+        def apply_initial_deflection(pts):
+            # Calculate distance from fixed end as proportion of total length
+            relative_x = (pts[:, 0] - min_x) / bar_length
+            # Apply quadratic deflection in Y direction (typical cantilever shape)
+            deflection_magnitude = 0.1 * bar_length  # 10% of bar length
+            deflection = deflection_magnitude * (relative_x ** 2)
+            # Only apply to non-fixed points
+            mask = relative_x > 0.05
+            pts[mask, 1] -= deflection[mask]
+            return pts
+            
+        # Apply the initial deformation to the bar
+        current_pts = bar_sim_obj.pts.clone()
+        bar_sim_obj.pts = apply_initial_deflection(current_pts)
+        print("Applied initial deflection to help visualize cantilever behavior.")
 
         # --- Set Gravity ---
-        # Apply gravity pulling downwards along the Y-axis (standard convention)
-        # Adjust the direction if your coordinate system is different (e.g., Z-down)
-        gravity_vector = torch.tensor([0.0, -9.8, 0.0], device=self.default_device, dtype=self.default_dtype)
+        # Apply stronger gravity to make the effect more pronounced
+        gravity_vector = torch.tensor([0.0, -15.0, 0.0], device=self.default_device, dtype=self.default_dtype)
         self.set_scene_gravity(acc_gravity=gravity_vector)
         print(f"Set scene gravity: {gravity_vector.cpu().numpy()}")
 
-        # --- Optional: Set Floor ---
-        # Add a floor below the bar to prevent it falling indefinitely
-        self.set_scene_floor(floor_height=-0.8, floor_axis=1, floor_penalty=10000) # Floor at y = -0.8
-        print("Set scene floor at Y = -0.8.")
+        # --- Set Floor ---
+        self.set_scene_floor(floor_height=-1.0, floor_axis=1, floor_penalty=20000) # Floor at y = -1.0
+        print("Set scene floor at Y = -1.0.")
 
         return obj_idx
-    
+
     def setup_twisted_pipe_scene(self, pipe_sim_obj: SimplicitsObject):
         """
-        Sets up a scene with a pipe fixed at both ends.
+        Sets up a scene with a pipe fixed at both ends and applies twist.
+        Improved to create an actual twisting effect.
         """
-        print("Setting up twisted pipe scene (fixing both ends)...")
+        print("Setting up twisted pipe scene with proper twist...")
 
         # Add the pipe object to the scene
         obj_idx = self.add_object(pipe_sim_obj)
 
         # --- Define Boundary Conditions ---
-        # We need functions that identify points at each end based on rest positions
-        # IMPORTANT: Adjust these functions based on your pipe's orientation and dimensions!
-        # Let's assume the pipe lies mostly along the Z-axis.
-
         pipe_pts_rest = pipe_sim_obj.pts # Get rest vertices (N, 3)
         z_coords = pipe_pts_rest[:, 2]
         min_z, max_z = torch.min(z_coords), torch.max(z_coords)
@@ -732,22 +746,281 @@ class SimplicitsScene:
             # Identify points at the 'maximum Z' end
             return pts_rest[:, 2] > (max_z - end_threshold)
 
-        # Apply the boundary conditions to fix the points identified by the functions
-        # High penalty means the points will be strongly fixed.
-        fix_penalty = 1e6
+        # Apply boundary conditions with high penalty
+        fix_penalty = 1e7  # Increased for stronger fixing
         self.set_object_boundary_condition(obj_idx, "fix_end1", identify_pipe_end1, fix_penalty)
         self.set_object_boundary_condition(obj_idx, "fix_end2", identify_pipe_end2, fix_penalty)
         print(f"Applied boundary conditions to fix ends (Z < {min_z + end_threshold:.3f} and Z > {max_z - end_threshold:.3f})")
 
-        # --- Set Material Properties ---
-        # Make it reasonably stiff so it doesn't just collapse
-        self.set_object_materials(obj_idx, yms=torch.tensor(5e4, device=self.default_device, dtype=self.default_dtype))
-        print("Set pipe material properties (Yms=5e4).")
+        # --- Apply Initial Twist ---
+        # Calculate the center of the pipe for rotation reference
+        pipe_center_xy = torch.mean(pipe_pts_rest[:, :2], dim=0)
+        
+        def apply_twist_deformation(pts):
+            # Get a copy of the original points
+            twisted_pts = pts.clone()
+            
+            # Calculate normalized position along the pipe (0 at beginning, 1 at end)
+            z_normalized = (pts[:, 2] - min_z) / pipe_length
+            
+            # Create a twist angle that varies along the pipe length
+            # Fixed at both ends, maximum in the middle
+            # This creates a smooth twist that satisfies the boundary conditions
+            twist_angle = torch.sin(z_normalized * torch.pi) * 0.5  # Max twist of 0.5 radians (~28 degrees)
+            
+            # Calculate center-relative coordinates for rotation
+            rel_x = pts[:, 0] - pipe_center_xy[0]
+            rel_y = pts[:, 1] - pipe_center_xy[1]
+            
+            # Apply the twist rotation around the Z-axis
+            # Points at the ends won't move due to sin(0) = sin(π) = 0
+            # Use 2D rotation formulas
+            twisted_pts[:, 0] = pipe_center_xy[0] + rel_x * torch.cos(twist_angle) - rel_y * torch.sin(twist_angle)
+            twisted_pts[:, 1] = pipe_center_xy[1] + rel_x * torch.sin(twist_angle) + rel_y * torch.cos(twist_angle)
+            
+            return twisted_pts
+        
+        # Apply the twist deformation
+        pipe_sim_obj.pts = apply_twist_deformation(pipe_pts_rest)
+        print("Applied initial twist deformation to the pipe.")
 
-        # --- Optional: Set Gravity ---
-        # You might add slight gravity to see some deformation if the pipe isn't perfectly straight
-        # scene.set_scene_gravity(acc_gravity=torch.tensor([0, -0.1, 0], device=scene.default_device))
-        # print("Set mild gravity.")
+        # --- Set Material Properties ---
+        # Adjust material properties for better visualization of the twist effect
+        self.set_object_materials(obj_idx, 
+                                yms=torch.tensor(5e4, device=self.default_device, dtype=self.default_dtype),
+                                prs=torch.tensor(0.3, device=self.default_device, dtype=self.default_dtype))  # Add Poisson ratio
+        print("Set pipe material properties (Yms=5e4, Poisson's ratio=0.3).")
+        
+        # --- Add twist constraint using a custom position-based approach ---
+        # Instead of external forces, we'll use an additional boundary condition
+        # to constrain points in a twisted configuration
+        
+        def twist_constraint(pts):
+            # We'll create a soft constraint that encourages the twisted shape
+            # Skip the fixed ends (they're constrained by the boundary conditions)
+            mask = (pts[:, 2] > (min_z + end_threshold)) & (pts[:, 2] < (max_z - end_threshold))
+            
+            # Calculate the ideal twisted position for each point
+            # Use the same twist calculation as in the initial deformation
+            twisted_pts = pts.clone()
+            
+            # Normalized position along Z-axis (0 to 1)
+            z_normalized = (pts[:, 2] - min_z) / pipe_length
+            
+            # Create a twist angle that varies along the pipe length
+            twist_angle = torch.sin(z_normalized * torch.pi) * 0.5
+            
+            # Calculate center-relative coordinates for rotation
+            rel_x = pts[:, 0] - pipe_center_xy[0]
+            rel_y = pts[:, 1] - pipe_center_xy[1]
+            
+            # Calculate the ideal twisted position
+            twisted_pts[:, 0] = pipe_center_xy[0] + rel_x * torch.cos(twist_angle) - rel_y * torch.sin(twist_angle)
+            twisted_pts[:, 1] = pipe_center_xy[1] + rel_x * torch.sin(twist_angle) + rel_y * torch.cos(twist_angle)
+            
+            # The constraint is the difference between current and ideal positions
+            # We only apply it to non-fixed points
+            diff = torch.zeros_like(pts)
+            diff[mask] = twisted_pts[mask] - pts[mask]
+            
+            return diff
+        
+        # Add a moderate constraint to maintain the twist shape during simulation
+        twist_penalty = 1e3  # Use a softer penalty than the fixed ends
+        self.set_object_boundary_condition(obj_idx, "maintain_twist", twist_constraint, twist_penalty)
+        print("Added twist maintenance constraint.")
+
+        return obj_idx
+
+    def setup_muscle_cantilever_scene(self, muscle_sim_obj: SimplicitsObject):
+        """
+        Sets up a cantilever scene for a muscle object, fixing one end and allowing the other to bend under gravity.
+        Adapted for a muscle oriented along the x-axis as shown in the provided point cloud image.
+        """
+        print("Setting up muscle cantilever scene...")
+
+        # Add the muscle object to the scene
+        obj_idx = self.add_object(muscle_sim_obj)
+
+        # --- Define Boundary Condition ---
+        # Based on the image, the muscle is oriented along the x-axis
+        # We'll fix one end (let's fix the right end which appears thicker in the image)
+        muscle_pts_rest = muscle_sim_obj.pts  # Get rest vertices (N, 3)
+        x_coords = muscle_pts_rest[:, 0]
+        min_x, max_x = torch.min(x_coords), torch.max(x_coords)
+        muscle_length = max_x - min_x
+        end_threshold = muscle_length * 0.12  # Fix points within 12% of the right end
+                                            # Adjusted for the thicker end of muscle
+
+        def identify_muscle_fixed_end(pts_rest):
+            # Identify points at the maximum X end (right side)
+            return pts_rest[:, 0] > (max_x - end_threshold)
+
+        # Apply strong boundary condition to fix the end
+        fix_penalty = 1e7  # High penalty for rigid fixing
+        self.set_object_boundary_condition(obj_idx, "fix_muscle_end", identify_muscle_fixed_end, fix_penalty)
+        print(f"Applied boundary condition to fix right end (X > {max_x - end_threshold:.3f})")
+
+        # --- Set Material Properties ---
+        # Set muscle properties to be flexible like real muscle tissue
+        # Lower Young's modulus for flexibility and moderate density
+        self.set_object_materials(obj_idx,
+                                yms=torch.tensor(5e3, device=self.default_device, dtype=self.default_dtype),  # Lower stiffness
+                                rhos=torch.tensor(1080, device=self.default_device, dtype=self.default_dtype),  # Density similar to muscle tissue
+                                prs=torch.tensor(0.495, device=self.default_device, dtype=self.default_dtype))  # Nearly incompressible like real tissue
+        print("Set muscle material properties (Yms=5e3, Rhos=1080, Poisson=0.495).")
+
+        # --- Apply initial deflection to help visualization ---
+        def apply_initial_deflection(pts):
+            # Calculate distance from fixed end (right) as proportion of total length
+            # For muscles fixed at right end, normalize from right (1) to left (0)
+            relative_x = (max_x - pts[:, 0]) / muscle_length
+            
+            # Apply quadratic deflection in y direction (downward)
+            deflection_magnitude = 0.15 * muscle_length  # 15% of muscle length
+            deflection = deflection_magnitude * (relative_x ** 2)
+            
+            # Only apply to non-fixed points
+            mask = relative_x > 0.12  # Skip fixed end points
+            pts[mask, 1] -= deflection[mask]  # Deflect downward in y-direction
+            
+            return pts
+            
+        # Apply the initial deformation to the muscle
+        current_pts = muscle_sim_obj.pts.clone()
+        muscle_sim_obj.pts = apply_initial_deflection(current_pts)
+        print("Applied initial deflection to help visualize cantilever behavior.")
+
+        # --- Set Gravity ---
+        # Apply gravity aligned with the coordinate system in the image (y is downward)
+        gravity_vector = torch.tensor([0.0, -12.0, 0.0], device=self.default_device, dtype=self.default_dtype)
+        self.set_scene_gravity(acc_gravity=gravity_vector)
+        print(f"Set scene gravity: {gravity_vector.cpu().numpy()}")
+
+        # --- Set Floor ---
+        # Add a floor below the muscle to prevent it falling indefinitely
+        self.set_scene_floor(floor_height=-0.6, floor_axis=1, floor_penalty=20000)  # Floor at y = -0.6
+        print("Set scene floor at Y = -0.6.")
+
+        return obj_idx
+
+    def setup_muscle_twist_scene(self, muscle_sim_obj: SimplicitsObject):
+        """
+        Sets up a twisting scene for a muscle object, fixing both ends and applying a twist.
+        Adapted for a muscle oriented along the x-axis as shown in the provided point cloud image.
+        """
+        print("Setting up muscle twist scene...")
+
+        # Add the muscle object to the scene
+        obj_idx = self.add_object(muscle_sim_obj)
+
+        # --- Define Boundary Conditions ---
+        # Based on the image, fix both ends of the muscle (which lies along the x-axis)
+        muscle_pts_rest = muscle_sim_obj.pts  # Get rest vertices (N, 3)
+        x_coords = muscle_pts_rest[:, 0]
+        min_x, max_x = torch.min(x_coords), torch.max(x_coords)
+        muscle_length = max_x - min_x
+        
+        # Use slightly larger threshold for the thicker ends of the muscle
+        end_threshold = muscle_length * 0.12  # Consider points within 12% of ends
+
+        def identify_muscle_end1(pts_rest):
+            # Identify points at the 'minimum X' end (left side)
+            return pts_rest[:, 0] < (min_x + end_threshold)
+
+        def identify_muscle_end2(pts_rest):
+            # Identify points at the 'maximum X' end (right side)
+            return pts_rest[:, 0] > (max_x - end_threshold)
+
+        # Apply boundary conditions with high penalty
+        fix_penalty = 1e7  # High penalty for strong fixing
+        self.set_object_boundary_condition(obj_idx, "fix_left_end", identify_muscle_end1, fix_penalty)
+        self.set_object_boundary_condition(obj_idx, "fix_right_end", identify_muscle_end2, fix_penalty)
+        print(f"Applied boundary conditions to fix both ends (X < {min_x + end_threshold:.3f} and X > {max_x - end_threshold:.3f})")
+
+        # --- Set Material Properties ---
+        # Set muscle properties with realistic values for muscle tissue
+        self.set_object_materials(obj_idx, 
+                                yms=torch.tensor(8e3, device=self.default_device, dtype=self.default_dtype),
+                                rhos=torch.tensor(1080, device=self.default_device, dtype=self.default_dtype),
+                                prs=torch.tensor(0.495, device=self.default_device, dtype=self.default_dtype))  # Nearly incompressible
+        print("Set muscle material properties (Yms=8e3, Rhos=1080, Poisson=0.495).")
+
+        # --- Apply Initial Twist ---
+        # For the muscle, we'll rotate around the x-axis which is the long axis
+        # Calculate the center of the muscle in YZ plane for rotation reference
+        muscle_center_y = torch.mean(muscle_pts_rest[:, 1])
+        muscle_center_z = torch.mean(muscle_pts_rest[:, 2])
+        
+        def apply_twist_deformation(pts):
+            # Get a copy of the original points
+            twisted_pts = pts.clone()
+            
+            # Calculate normalized position along the muscle (0 at left end, 1 at right end)
+            x_normalized = (pts[:, 0] - min_x) / muscle_length
+            
+            # Create a twist angle that varies along the muscle length
+            # Fixed at both ends, maximum in the middle
+            # This creates a smooth twist that satisfies the boundary conditions
+            twist_angle = torch.sin(x_normalized * torch.pi) * 0.7  # Max twist of 0.7 radians (~40 degrees)
+            
+            # Calculate center-relative coordinates for rotation in YZ plane
+            rel_y = pts[:, 1] - muscle_center_y
+            rel_z = pts[:, 2] - muscle_center_z
+            
+            # Apply the twist rotation around the X-axis
+            # Using rotation in YZ plane
+            twisted_pts[:, 1] = muscle_center_y + rel_y * torch.cos(twist_angle) - rel_z * torch.sin(twist_angle)
+            twisted_pts[:, 2] = muscle_center_z + rel_y * torch.sin(twist_angle) + rel_z * torch.cos(twist_angle)
+            
+            return twisted_pts
+        
+        # Apply the twist deformation
+        muscle_sim_obj.pts = apply_twist_deformation(muscle_pts_rest)
+        print("Applied initial twist deformation to the muscle.")
+
+        # --- Add twist constraint to maintain the twist during simulation ---
+        def twist_constraint(pts):
+            # Create a soft constraint that encourages the twisted shape
+            # Skip the fixed ends (they're constrained by the boundary conditions)
+            mask = ((pts[:, 0] > (min_x + end_threshold)) & 
+                    (pts[:, 0] < (max_x - end_threshold)))
+            
+            # Calculate the ideal twisted position for each point
+            # Use the same twist calculation as in the initial deformation
+            twisted_pts = pts.clone()
+            
+            # Normalized position along X-axis (0 to 1)
+            x_normalized = (pts[:, 0] - min_x) / muscle_length
+            
+            # Create a twist angle that varies along the muscle length
+            twist_angle = torch.sin(x_normalized * torch.pi) * 0.7
+            
+            # Calculate center-relative coordinates for rotation
+            rel_y = pts[:, 1] - muscle_center_y
+            rel_z = pts[:, 2] - muscle_center_z
+            
+            # Calculate the ideal twisted position
+            twisted_pts[:, 1] = muscle_center_y + rel_y * torch.cos(twist_angle) - rel_z * torch.sin(twist_angle)
+            twisted_pts[:, 2] = muscle_center_z + rel_y * torch.sin(twist_angle) + rel_z * torch.cos(twist_angle)
+            
+            # The constraint is the difference between current and ideal positions
+            # We only apply it to non-fixed points
+            diff = torch.zeros_like(pts)
+            diff[mask] = twisted_pts[mask] - pts[mask]
+            
+            return diff
+        
+        # Add a moderate constraint to maintain the twist shape during simulation
+        twist_penalty = 5e2  # Use a softer penalty than the fixed ends
+        self.set_object_boundary_condition(obj_idx, "maintain_twist", twist_constraint, twist_penalty)
+        print("Added twist maintenance constraint.")
+
+        # We don't need gravity for the twist simulation, but we can add a small amount
+        # to see how the muscle responds to the twist + gravity combination
+        small_gravity = torch.tensor([0.0, -2.0, 0.0], device=self.default_device, dtype=self.default_dtype)
+        self.set_scene_gravity(acc_gravity=small_gravity)
+        print(f"Set small gravity for realism: {small_gravity.cpu().numpy()}")
 
         return obj_idx
 

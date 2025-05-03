@@ -1,6 +1,8 @@
 # Blender v3.2.2 OBJ File: ''
 # www.blender.org
-o bartels-1000
+mtllib beam.mtl
+o beam
+usemtl BeamMat
 v 0.368384 0.499806 -0.099997
 v 0.437496 0.499803 -0.099998
 v 0.390808 0.499806 -0.049676
